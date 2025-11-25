@@ -1,0 +1,13 @@
+.env/
+.venv/
+include/
+lib/
+bin/
+__pycache__/
+DroneKRTI.param
+DroneKRTI2.param
+hasil_dengan_teks.jpg
+Test Plan Document.docx
+Test Plan Document.pdf
+Video.mp4
+VideoDroneIWILL.mp4
