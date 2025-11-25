@@ -11,7 +11,7 @@ import coordinates
 import logging
 
 DEBUG = True
-DEBUG_VIDEO = "VideoDroneIWILL.mp4"   # ganti sesuai video kamu
+DEBUG_VIDEO = r"C:\sapi\sapi kuliah\iwill\DroneIWILLHumanDetection\VideoDroneIWILL.mp4"
 
 
 logger = logging.getLogger("follow_logger")
@@ -34,7 +34,9 @@ logger.addHandler(file_handler)
 # cap = None
 
 if DEBUG:
-    cap = cv2.VideoCapture(DEBUG_VIDEO)
+    video = cv2.VideoCapture(DEBUG_VIDEO)
+    if not video.isOpened():
+        print("Error: video tidak bisa dibuka!")
 else:
     cap = cv2.VideoCapture(0)
 
@@ -92,6 +94,10 @@ def take_photo(teks, filename):
         print("Belum ada frame terdeteksi manusia. Foto tidak diambil.")
         return
 
+    # Baru tampilkan kalau sudah pasti tidak None
+    cv2.imshow("Last Detected Frame", last_detected_frame)
+    cv2.waitKey(1)
+
     frame = last_detected_frame.copy()
 
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -100,6 +106,7 @@ def take_photo(teks, filename):
 
     cv2.imwrite('./foto/' + filename + '.jpg', frame)
     print("Foto berhasil disimpan dari frame deteksi manusia.")
+
 
 
 def humanDetector(args):
@@ -116,6 +123,8 @@ def humanDetector(args):
 
     if DEBUG:
         video = cv2.VideoCapture(DEBUG_VIDEO)
+        if not video.isOpened():
+            print("Error: video tidak bisa dibuka!")
     elif args["video"]:
         video = cv2.VideoCapture(args["video"])
     else:
@@ -301,7 +310,7 @@ def get_altitude():
             conn.commit()
                         
             
-            coordinates.add_attribute(time,data.get('latitude'),data.get('longitude'))
+            #coordinates.add_attribute(time,data.get('latitude'),data.get('longitude'))
 
             cursor.close()
             conn.close()
@@ -490,4 +499,5 @@ def command():
 
 if __name__ == '__main__':
     initiateDatabase()
-    app.run(host="0.0.0.0",debug=True)
+    threading.Thread(target=humanDetector, args=({"video": None},), daemon=True).start()
+    app.run(host="0.0.0.0", port=5000)
