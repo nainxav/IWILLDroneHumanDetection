@@ -496,6 +496,52 @@ def command():
             
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+        
+#buat nambahin gps
+from PIL import Image
+import piexif
+
+def deg_to_dms_rational(deg_float):
+    deg = int(deg_float)
+    min_float = abs(deg_float - deg) * 60
+    minute = int(min_float)
+    sec = round((min_float - minute) * 60 * 100)
+    return [(deg, 1), (minute, 1), (sec, 100)]
+
+def add_gps_to_image(input_path, output_path, droneData):
+    img = Image.open(input_path)
+
+    lat = droneData["latitude"]
+    lon = droneData["longitude"]
+
+    # Check if lat/lon exist
+    if lat is None or lon is None:
+        raise ValueError("Latitude or longitude is missing in droneData.")
+
+    exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+
+    # references
+    lat_ref = "N" if lat >= 0 else "S"
+    lon_ref = "E" if lon >= 0 else "W"
+
+    # convert
+    exif_dict["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat_ref
+    exif_dict["GPS"][piexif.GPSIFD.GPSLatitude] = deg_to_dms_rational(abs(lat))
+
+    exif_dict["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lon_ref
+    exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = deg_to_dms_rational(abs(lon))
+
+    # optional — you can also embed altitude if available
+    if droneData["altitude"] is not None:
+        exif_dict["GPS"][piexif.GPSIFD.GPSAltitude] = (int(droneData["altitude"]), 1)
+        exif_dict["GPS"][piexif.GPSIFD.GPSAltitudeRef] = 0  # 0 = above sea level
+
+    # save image with GPS EXIF
+    exif_bytes = piexif.dump(exif_dict)
+    img.save(output_path, "jpeg", exif=exif_bytes)
+
+    print(f"Saved GPS metadata to {output_path}")
+
 
 if __name__ == '__main__':
     initiateDatabase()
