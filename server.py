@@ -106,6 +106,7 @@ def take_photo(teks, filename):
 
     cv2.imwrite('./foto/' + filename + '.jpg', frame)
     print("Foto berhasil disimpan dari frame deteksi manusia.")
+    add_gps_to_image('./foto/' + filename + '.jpg', './foto/' + filename + '.jpg', droneData)
 
 
 
@@ -146,58 +147,6 @@ def humanDetector(args):
 
     video.release()
     cv2.destroyAllWindows()
-
-# def take_photo(teks,filename):
-#     # if not cap.isOpened():
-#     #     print("Tidak bisa membuka kamera.")
-#     #     exit()
-
-#     video = "C:\sapi\sapi kuliah\iwill\Drone\VideoDroneIWILL.mp4"
-
-#     if not video.isOpened():
-#         print("Tidak bisa membuka video debug.")
-#         return
-
-
-#     #ret, frame = cap.read()
-#     ret, frame = video.read()
-#     video.release()
-#     # frame = detect(frame)
-
-#     if not ret:
-#         print("Frame pertama tidak bisa dibaca.")
-#         return
-
-#     font = cv2.FONT_HERSHEY_SIMPLEX
-#     posisi = (10, frame.shape[0] - 10)
-
-#     cv2.putText(frame, teks, posisi, font, 0.4, (255, 255, 255), 2, cv2.LINE_AA)
-
-#     cv2.imwrite('./foto/' + filename + '.jpg', frame)
-
-#     print("Foto debug berhasil disimpan.")
-
-    # # teks = "Ini teks di pojok kiri bawah"
-    # font = cv2.FONT_HERSHEY_SIMPLEX
-    # ukuran_font = 0.4
-    # warna = (255, 255, 255)  
-    # ketebalan = 2
-
-    # tinggi, lebar = frame.shape[:2]
-    # posisi = (10, tinggi - 10)
-
-    # cv2.putText(frame, teks, posisi, font, ukuran_font, warna, ketebalan, cv2.LINE_AA)
-
-    # # cv2.imshow('Gambar dengan Teks', frame)
-
-    # cv2.imwrite('./foto/'+filename+'.jpg', frame)    
-    
-    # print("berhasil")
-
-    # cv2.waitKey(0)
-
-    # cap.release()
-    # cv2.destroyAllWindows()
 
 app = Flask(__name__)
 CORS(app)
@@ -511,36 +460,32 @@ def deg_to_dms_rational(deg_float):
 def add_gps_to_image(input_path, output_path, droneData):
     img = Image.open(input_path)
 
-    lat = droneData["latitude"]
-    lon = droneData["longitude"]
-
-    # Check if lat/lon exist
-    if lat is None or lon is None:
-        raise ValueError("Latitude or longitude is missing in droneData.")
+    lat = float(droneData["latitude"])
+    lon = float(droneData["longitude"])
 
     exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
 
-    # references
     lat_ref = "N" if lat >= 0 else "S"
     lon_ref = "E" if lon >= 0 else "W"
 
-    # convert
     exif_dict["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat_ref
     exif_dict["GPS"][piexif.GPSIFD.GPSLatitude] = deg_to_dms_rational(abs(lat))
 
     exif_dict["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lon_ref
     exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = deg_to_dms_rational(abs(lon))
 
-    # optional — you can also embed altitude if available
-    if droneData["altitude"] is not None:
-        exif_dict["GPS"][piexif.GPSIFD.GPSAltitude] = (int(droneData["altitude"]), 1)
-        exif_dict["GPS"][piexif.GPSIFD.GPSAltitudeRef] = 0  # 0 = above sea level
+    # ---- ALTITUDE FIX ----
+    if droneData["altitude"] not in (None, "", "None"):
+        alt = float(droneData["altitude"])
+        exif_dict["GPS"][piexif.GPSIFD.GPSAltitudeRef] = 1 if alt < 0 else 0
+        exif_dict["GPS"][piexif.GPSIFD.GPSAltitude] = (int(abs(alt) * 100), 100)
 
-    # save image with GPS EXIF
+    # ---- SAVE ----
     exif_bytes = piexif.dump(exif_dict)
     img.save(output_path, "jpeg", exif=exif_bytes)
 
-    print(f"Saved GPS metadata to {output_path}")
+    print("GPS metadata saved.")
+    print(output_path)
 
 
 if __name__ == '__main__':
