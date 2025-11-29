@@ -39,4 +39,4 @@ def get_gps(path):
 
     return lat, lon
 
-print(get_gps("foto/11-25-12-30-25.jpg"))
+print(get_gps("foto/11-27-19-24-06.jpg"))
