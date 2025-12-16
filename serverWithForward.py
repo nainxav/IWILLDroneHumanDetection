@@ -27,6 +27,10 @@ import imutils
 import logging
 import os
 import time
+from flask import Flask, send_from_directory
+
+
+
 
 # Optional imports used if available
 try:
@@ -267,6 +271,16 @@ droneData = {'altitude': None, 'latitude': None, 'longitude': None,
              'yaw': None, 'satcount': None, 'wp_dist': None}
 
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FOTO_DIR = os.path.join(BASE_DIR, "foto")
+
+@app.route("/foto/<path:filename>")
+def foto(filename):
+    print("REQUEST FOTO:", filename)
+    return send_from_directory(FOTO_DIR, filename)
+
+
+
 @app.route('/data', methods=['GET', 'POST'])
 def data_route():
     global droneData
@@ -326,7 +340,7 @@ def data_route():
         cursor.execute(insert_query, data_tuple)
         conn.commit()
 
-        return jsonify({'message': 'Data saved', 'photo': photo_path}), 200
+        return jsonify({'message': 'Data saved'}), 200
 
     except Exception as e:
         logger.exception("/data POST error: %s", e)
