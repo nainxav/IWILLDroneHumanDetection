@@ -55,6 +55,9 @@ DEBUG_VIDEO = r"C:\sapi\sapi kuliah\iwill\DroneIWILLHumanDetection\VideoDroneIWI
 DB_CONFIG = {"host": "localhost", "user": "root", "password": "", "database": "drone"}
 PHOTO_DIR = "./foto"
 os.makedirs(PHOTO_DIR, exist_ok=True)
+# Detection state
+human_detected = False
+last_detection_time = None
 
 # ============================================================
 # LOGGER
@@ -140,19 +143,37 @@ def add_gps_to_image(input_path, output_path, latitude, longitude, altitude=None
 # ============================================================
 # DETECTION & PHOTO FUNCTIONS
 # ============================================================
-
 def detect(frame):
-    """Detect people in frame (HOG) and draw bounding boxes.
-    Stores last_detected_frame when detection occurs.
-    """
-    global last_detected_frame
-    boxes, _ = HOGCV.detectMultiScale(frame, winStride=(4, 4), padding=(8, 8), scale=1.03)
-    for (x, y, w, h) in boxes:
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    """Detect people in frame and update detection state."""
+    global last_detected_frame, human_detected, last_detection_time
 
-    if len(boxes) > 0:
+    boxes, _ = HOGCV.detectMultiScale(
+        frame,
+        winStride=(4, 4),
+        padding=(8, 8),
+        scale=1.03
+    )
+
+    detected = False
+
+    for (x, y, w, h) in boxes:
+        detected = True
+        cv2.rectangle(
+            frame,
+            (x, y),
+            (x + w, y + h),
+            (0, 255, 0),
+            2
+        )
+
+    if detected:
         last_detected_frame = frame.copy()
-    return frame
+        human_detected = True
+        last_detection_time = datetime.utcnow()
+    else:
+        human_detected = False
+
+    return frame, detected
 
 
 def take_photo(text, filename, drone_data=None):
@@ -205,8 +226,13 @@ def human_detector_thread(video_path=None):
             break
 
         frame = imutils.resize(frame, width=min(800, frame.shape[1]))
-        frame = detect(frame)
+        frame, detected = detect(frame)
+
         cv2.imshow("output", frame)
+
+        if detected:
+            logger.info("Human detected")
+
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
@@ -264,7 +290,7 @@ command_lock = threading.Lock()
 
 droneData = {'altitude': None, 'latitude': None, 'longitude': None,
              'roll': None, 'groundspeed': None, 'verticalspeed': None,
-             'yaw': None, 'satcount': None, 'wp_dist': None}
+             'yaw': None, 'satcount': None, 'wp_dist': None, 'human_detected': False}
 
 
 @app.route('/data', methods=['GET', 'POST'])
@@ -287,24 +313,34 @@ def data_route():
             except Exception:
                 pass
 
-    # POST
+   # POST
     try:
         data = request.get_json(force=True)
-        # update global
+
+        # Update global telemetry
         droneData.update(data)
 
-        # Save photo with timestamp name
-        timestamp = datetime.now().strftime('%m-%d-%H-%M-%S')
-        teks = f"alt:{data.get('altitude')} lat:{data.get('latitude')} lon:{data.get('longitude')}"
-        photo_path = take_photo(teks, timestamp, drone_data=data)
+        # Attach detection state
+        data["human_detected"] = human_detected
 
-        # Insert to DB (convert strings to floats when possible)
+        photo_path = None
+
+        # Take photo ONLY if human detected
+        if human_detected:
+            timestamp = datetime.now().strftime('%m-%d-%H-%M-%S')
+            teks = f"alt:{data.get('altitude')} lat:{data.get('latitude')} lon:{data.get('longitude')}"
+            photo_path = take_photo(teks, timestamp, drone_data=data)
+
+        # Insert to DB
         conn = connect_database()
         cursor = conn.cursor()
+
         insert_query = (
-            "INSERT INTO drone_data (altitude, latitude, longitude, roll, groundspeed, verticalspeed, yaw, satcount, wp_dist, timestamp)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+            "INSERT INTO drone_data "
+            "(altitude, latitude, longitude, roll, groundspeed, verticalspeed, yaw, satcount, wp_dist, timestamp, human_detected) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
         )
+
         def _to_float(v):
             try:
                 return float(v) if v not in (None, "", "None") else None
@@ -321,12 +357,18 @@ def data_route():
             _to_float(data.get('yaw')),
             int(float(data.get('satcount'))) if data.get('satcount') not in (None, "", "None") else None,
             _to_float(data.get('wp_dist')),
-            datetime.now()
+            datetime.now(),
+            human_detected
         )
+
         cursor.execute(insert_query, data_tuple)
         conn.commit()
 
-        return jsonify({'message': 'Data saved', 'photo': photo_path}), 200
+        return jsonify({
+            'message': 'Data saved',
+            'human_detected': human_detected,
+            'photo': photo_path
+        }), 200
 
     except Exception as e:
         logger.exception("/data POST error: %s", e)
