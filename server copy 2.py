@@ -27,10 +27,6 @@ import imutils
 import logging
 import os
 import time
-from flask import Flask, send_from_directory
-
-
-
 
 # Optional imports used if available
 try:
@@ -59,8 +55,6 @@ DEBUG_VIDEO = r"C:\sapi\sapi kuliah\iwill\DroneIWILLHumanDetection\VideoDroneIWI
 DB_CONFIG = {"host": "localhost", "user": "root", "password": "", "database": "drone"}
 PHOTO_DIR = "./foto"
 os.makedirs(PHOTO_DIR, exist_ok=True)
-human_detected = False
-last_detection_time = None
 
 # ============================================================
 # LOGGER
@@ -148,36 +142,18 @@ def add_gps_to_image(input_path, output_path, latitude, longitude, altitude=None
 # ============================================================
 
 def detect(frame):
-    """Detect people in frame and update detection state."""
-    global last_detected_frame, human_detected, last_detection_time
-
-    boxes, _ = HOGCV.detectMultiScale(
-        frame,
-        winStride=(4, 4),
-        padding=(8, 8),
-        scale=1.03
-    )
-
-    detected = False
-
+    """Detect people in frame (HOG) and draw bounding boxes.
+    Stores last_detected_frame when detection occurs.
+    """
+    global last_detected_frame
+    boxes, _ = HOGCV.detectMultiScale(frame, winStride=(4, 4), padding=(8, 8), scale=1.03)
     for (x, y, w, h) in boxes:
-        detected = True
-        cv2.rectangle(
-            frame,
-            (x, y),
-            (x + w, y + h),
-            (0, 255, 0),
-            2
-        )
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-    if detected:
+    if len(boxes) > 0:
         last_detected_frame = frame.copy()
-        human_detected = True
-        last_detection_time = datetime.utcnow()
-    else:
-        human_detected = False
+    return frame
 
-    return frame, detected
 
 def take_photo(text, filename, drone_data=None):
     """Capture last detected frame, add overlay text, save image, optionally embed GPS.
@@ -229,13 +205,8 @@ def human_detector_thread(video_path=None):
             break
 
         frame = imutils.resize(frame, width=min(800, frame.shape[1]))
-        frame, detected = detect(frame)
-
+        frame = detect(frame)
         cv2.imshow("output", frame)
-
-        if detected:
-            logger.info("Human detected")
-
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
@@ -295,15 +266,6 @@ droneData = {'altitude': None, 'latitude': None, 'longitude': None,
              'roll': None, 'groundspeed': None, 'verticalspeed': None,
              'yaw': None, 'satcount': None, 'wp_dist': None, 'human_detected': False}
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FOTO_DIR = os.path.join(BASE_DIR, "foto")
-
-@app.route("/foto/<path:filename>")
-def foto(filename):
-    print("REQUEST FOTO:", filename)
-    return send_from_directory(FOTO_DIR, filename)
-
-
 
 @app.route('/data', methods=['GET', 'POST'])
 def data_route():
@@ -331,27 +293,18 @@ def data_route():
         # update global
         droneData.update(data)
 
-        # Attach detection state
-        data["human_detected"] = human_detected
-
-        photo_path = None
-
-        # Take photo ONLY if human detected
-        if human_detected:
-            timestamp = datetime.now().strftime('%m-%d-%H-%M-%S')
-            teks = f"alt:{data.get('altitude')} lat:{data.get('latitude')} lon:{data.get('longitude')}"
-            photo_path = take_photo(teks, timestamp, drone_data=data)
+        # Save photo with timestamp name
+        timestamp = datetime.now().strftime('%m-%d-%H-%M-%S')
+        teks = f"alt:{data.get('altitude')} lat:{data.get('latitude')} lon:{data.get('longitude')}"
+        photo_path = take_photo(teks, timestamp, drone_data=data)
 
         # Insert to DB (convert strings to floats when possible)
         conn = connect_database()
         cursor = conn.cursor()
-
         insert_query = (
-            "INSERT INTO drone_data "
-            "(altitude, latitude, longitude, roll, groundspeed, verticalspeed, yaw, satcount, wp_dist, timestamp, human_detected) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+            "INSERT INTO drone_data (altitude, latitude, longitude, roll, groundspeed, verticalspeed, yaw, satcount, wp_dist, timestamp)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
         )
-
         def _to_float(v):
             try:
                 return float(v) if v not in (None, "", "None") else None
@@ -368,18 +321,12 @@ def data_route():
             _to_float(data.get('yaw')),
             int(float(data.get('satcount'))) if data.get('satcount') not in (None, "", "None") else None,
             _to_float(data.get('wp_dist')),
-            datetime.now(),
-            human_detected
+            datetime.now()
         )
-
         cursor.execute(insert_query, data_tuple)
         conn.commit()
 
-        return jsonify({
-            'message': 'Data saved',
-            'human_detected': human_detected,
-            'photo': photo_path
-        }), 200
+        return jsonify({'message': 'Data saved', 'photo': photo_path}), 200
 
     except Exception as e:
         logger.exception("/data POST error: %s", e)
@@ -389,6 +336,7 @@ def data_route():
             cursor.close(); conn.close()
         except Exception:
             pass
+
 
 @app.route('/recent', methods=['GET'])
 def recent_route():
@@ -440,73 +388,21 @@ def command_route():
         payload = request.json
         if 'command' not in payload:
             return jsonify({'error': 'invalid format'}), 400
-        
-        command = payload['command'].lower().strip()
+        cmd = payload['command'].strip()
 
-        if command.startswith('testmotor'):
-            parts = command.split(',')
+        # Basic validation for complex commands (testmotor,goto,followtarget)
+        if cmd.startswith('testmotor'):
+            parts = cmd.split(',')
             if len(parts) != 3:
-                return jsonify({"error": "Invalid testmotor command format"}), 400
-            try:                    
-                motor_num = int(parts[1])
-                throttle = float(parts[2])
-                if not (1 <= motor_num <= 8 and 0 <= throttle <= 100):
-                    return jsonify({"error": "Invalid motor number or throttle value"}), 400
-            except ValueError:
-                return jsonify({"error": "Invalid testmotor parameters"}), 400
-        
-        elif command.startswith('forward'):
-            parts = command.split(',')
+                return jsonify({'error': 'invalid testmotor format'}), 400
+        elif cmd.startswith('goto') or cmd.startswith('followtarget'):
+            parts = cmd.split(',')
             if len(parts) != 4:
-                return jsonify({"error": "Invalid forward command format"}), 400
-            try:                    
-                x = float(parts[1])
-                y = float(parts[2])
-                z = float(parts[3])
-                if not (1 <= x <= 5 and 1 <= y <= 5 and -5 <= z <= -1 ):
-                    return jsonify({"error": "Invalid forward value"}), 400
-            except ValueError:
-                return jsonify({"error": "Invalid forward parameters"}), 400
-            
-        elif command.startswith('goto'):
-            parts = command.split(',')
-            if len(parts) != 4:
-                return jsonify({"error": "Invalid followtarget command format"}), 400
+                return jsonify({'error': 'invalid goto/followtarget format'}), 400
             try:
-                altitude = float(parts[1])
-                latitude = float(parts[2])
-                longitude = float(parts[3])
-                if not (-90 <= latitude <= 90 and -180 <= longitude <= 180 and altitude >= 0):
-                    return jsonify({"error": "Invalid GPS or altitude values"}), 400
-            except ValueError:
-                return jsonify({"error": "Invalid followtarget parameters"}), 400
-            
-        elif command.startswith('followtarget'):
-            parts = command.split(',')
-            if len(parts) != 4:
-                return jsonify({"error": "Invalid followtarget command format"}), 400
-            try:
-                altitude = float(parts[1])
-                latitude = float(parts[2])
-                longitude = float(parts[3])
-                if not (-90 <= latitude <= 90 and -180 <= longitude <= 180 and altitude >= 0):
-                    return jsonify({"error": "Invalid GPS or altitude values"}), 400
-            except ValueError:
-                return jsonify({"error": "Invalid followtarget parameters"}), 400
-
-        # # Basic validation for complex commands (testmotor,goto,followtarget)
-        # if cmd.startswith('testmotor'):
-        #     parts = cmd.split(',')
-        #     if len(parts) != 3:
-        #         return jsonify({'error': 'invalid testmotor format'}), 400
-        # elif cmd.startswith('goto') or cmd.startswith('followtarget'):
-        #     parts = cmd.split(',')
-        #     if len(parts) != 4:
-        #         return jsonify({'error': 'invalid goto/followtarget format'}), 400
-        #     try:
-        #         float(parts[1]); float(parts[2]); float(parts[3])
-        #     except Exception:
-        #         return jsonify({'error': 'invalid numeric parameters'}), 400
+                float(parts[1]); float(parts[2]); float(parts[3])
+            except Exception:
+                return jsonify({'error': 'invalid numeric parameters'}), 400
 
         with command_lock:
             current_command = payload
