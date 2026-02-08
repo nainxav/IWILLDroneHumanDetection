@@ -511,7 +511,7 @@ def command_route():
         with command_lock:
             current_command = payload
 
-        return jsonify({'message': 'command updated', 'command': cmd}), 200
+        return jsonify({'message': 'command updated', 'command': command}), 200
 
     except Exception as e:
         logger.exception("/command error: %s", e)
